@@ -1,0 +1,1 @@
+# Laravel-email-migration-email-2-s3
