@@ -28,3 +28,32 @@ Homestead.json
 .env.production
 .phpactor.json
 auth.json
+
+# Laravel storage directories
+/storage/framework/cache/data/*
+!/storage/framework/cache/data/.gitkeep
+/storage/framework/sessions/*
+!/storage/framework/sessions/.gitkeep
+/storage/framework/views/*
+!/storage/framework/views/.gitkeep
+/storage/logs/*
+!/storage/logs/.gitkeep
+
+# App storage
+/storage/app/files/*
+!/storage/app/files/.gitkeep
+/storage/app/migration.lock
+
+# MinIO data
+/storage/minio/*
+!/storage/minio/.gitkeep
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
