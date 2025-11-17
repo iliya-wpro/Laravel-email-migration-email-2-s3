@@ -229,6 +229,32 @@
                 </div>
             </div>
 
+            <!-- Worker Status -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Concurrent Workers</span>
+                    <span class="status-badge" style="background: #1e3a5f; color: #60a5fa;">
+                        {{ $stats['workers']['utilization'] }}% utilized
+                    </span>
+                </div>
+                <div class="big-number">{{ $stats['workers']['active'] }}/{{ $stats['workers']['configured'] }}</div>
+                <div class="big-label">Active Workers</div>
+                <div class="metric">
+                    <span class="metric-label">Idle Workers</span>
+                    <span class="metric-value" style="color: {{ $stats['workers']['idle'] > 0 ? '#94a3b8' : '#fbbf24' }}">
+                        {{ $stats['workers']['idle'] }}
+                    </span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Throughput per Worker</span>
+                    <span class="metric-value">{{ $stats['workers']['throughput_per_worker'] }} emails/min</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Avg Jobs per Worker</span>
+                    <span class="metric-value">{{ number_format($stats['workers']['avg_jobs_per_worker']) }}</span>
+                </div>
+            </div>
+
             <!-- System Health -->
             <div class="card">
                 <div class="card-header">
