@@ -21,11 +21,30 @@ echo "  Sleep: ${SLEEP}s"
 echo "  Max Jobs: $MAX_JOBS"
 echo "========================================="
 
-# Install composer dependencies if not present
-if [ ! -f /var/www/vendor/autoload.php ]; then
+# Install composer dependencies if not present or outdated
+cd /var/www
+
+# Check if we need to update dependencies (composer.lock missing or Laravel version mismatch)
+NEEDS_UPDATE=false
+if [ ! -f /var/www/vendor/autoload.php ] || [ ! -f /var/www/composer.lock ]; then
+    NEEDS_UPDATE=true
+elif [ -f /var/www/composer.lock ]; then
+    # Check if Laravel 11 is in composer.lock, if not we need to update
+    if ! grep -q '"laravel/framework"' /var/www/composer.lock || ! grep -q '"version": "v11\.' /var/www/composer.lock; then
+        echo "Detected Laravel version mismatch, removing old composer.lock..."
+        rm -f /var/www/composer.lock
+        NEEDS_UPDATE=true
+    fi
+fi
+
+if [ "$NEEDS_UPDATE" = true ]; then
     echo "Installing Composer dependencies..."
-    cd /var/www && composer install --no-interaction --prefer-dist --optimize-autoloader
+    composer install --no-interaction --prefer-dist --optimize-autoloader
     echo "Dependencies installed successfully!"
+else
+    # Verify dependencies are up to date
+    echo "Verifying Composer dependencies..."
+    composer install --no-interaction --prefer-dist --optimize-autoloader
 fi
 
 # Wait for database to be ready
