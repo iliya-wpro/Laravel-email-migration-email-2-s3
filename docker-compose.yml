@@ -4,6 +4,7 @@ services:
     container_name : mgr_app
     build:
       context: ./docker/php
+    command: /var/www/docker/php/start-app.sh
     volumes:
       - .:/var/www
       - ./storage/app/files:/var/www/storage/app/files
