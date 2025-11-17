@@ -1,7 +1,7 @@
-version: '3.8'
+name: s3_migrator
 services:
   app:
-    container_name : mgr_
+    container_name : mgr_app
     build:
       context: ./docker/php
     volumes:
@@ -14,7 +14,7 @@ services:
       - minio
 
   queue-worker:
-    container_name : mgr_queue-worker
+    container_name : mgr_queue_worker
     build:
       context: ./docker/php
     command: /var/www/docker/php/start-workers.sh
