@@ -2,10 +2,11 @@
 
 namespace App\Services;
 
+use App\Contracts\Services\S3ServiceInterface;
 use Aws\S3\S3Client;
 use Exception;
 
-class S3Service
+class S3Service implements S3ServiceInterface
 {
     private S3Client $client;
     private string $bucket;

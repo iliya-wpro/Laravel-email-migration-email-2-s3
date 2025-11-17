@@ -2,10 +2,11 @@
 
 namespace App\Repositories;
 
+use App\Contracts\Repositories\FileRepositoryInterface;
 use App\Models\File;
 use Illuminate\Support\Collection;
 
-class FileRepository
+class FileRepository implements FileRepositoryInterface
 {
     /**
      * Find file by ID.

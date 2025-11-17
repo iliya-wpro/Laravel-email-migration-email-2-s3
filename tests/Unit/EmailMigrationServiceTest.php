@@ -2,13 +2,11 @@
 
 namespace Tests\Unit;
 
+use App\Contracts\Services\EmailMigrationServiceInterface;
+use App\Contracts\Services\S3ServiceInterface;
 use App\Models\Email;
 use App\Models\File;
 use App\Models\MigrationProgress;
-use App\Repositories\EmailRepository;
-use App\Repositories\FileRepository;
-use App\Services\EmailMigrationService;
-use App\Services\S3Service;
 use Exception;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery;
@@ -19,17 +17,17 @@ class EmailMigrationServiceTest extends TestCase
 {
     use RefreshDatabase;
 
-    private EmailMigrationService $service;
+    private EmailMigrationServiceInterface $service;
     private MockInterface $s3Mock;
 
     protected function setUp(): void
     {
         parent::setUp();
 
-        $this->s3Mock = Mockery::mock(S3Service::class);
-        $this->app->instance(S3Service::class, $this->s3Mock);
+        $this->s3Mock = Mockery::mock(S3ServiceInterface::class);
+        $this->app->instance(S3ServiceInterface::class, $this->s3Mock);
 
-        $this->service = app(EmailMigrationService::class);
+        $this->service = app(EmailMigrationServiceInterface::class);
     }
 
     protected function tearDown(): void

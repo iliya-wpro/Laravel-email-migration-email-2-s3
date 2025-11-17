@@ -2,10 +2,11 @@
 
 namespace App\Repositories;
 
+use App\Contracts\Repositories\EmailRepositoryInterface;
 use App\Models\Email;
 use Illuminate\Support\Collection;
 
-class EmailRepository
+class EmailRepository implements EmailRepositoryInterface
 {
     /**
      * Get the next batch of emails to migrate.

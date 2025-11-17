@@ -2,8 +2,8 @@
 
 namespace App\Console\Commands;
 
+use App\Contracts\Services\EmailMigrationServiceInterface;
 use App\Models\MigrationProgress;
-use App\Services\EmailMigrationService;
 use Exception;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -18,11 +18,11 @@ class MigrateEmailsToS3Command extends Command
 
     protected $description = 'Migrate email bodies and attachments to S3';
 
-    private EmailMigrationService $migrationService;
+    private EmailMigrationServiceInterface $migrationService;
     private ?string $lockFile = null;
     private $progressBar = null;
 
-    public function __construct(EmailMigrationService $migrationService)
+    public function __construct(EmailMigrationServiceInterface $migrationService)
     {
         parent::__construct();
         $this->migrationService = $migrationService;

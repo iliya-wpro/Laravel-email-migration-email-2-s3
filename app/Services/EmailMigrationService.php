@@ -2,30 +2,32 @@
 
 namespace App\Services;
 
+use App\Contracts\Repositories\EmailRepositoryInterface;
+use App\Contracts\Repositories\FileRepositoryInterface;
+use App\Contracts\Services\EmailMigrationServiceInterface;
+use App\Contracts\Services\S3ServiceInterface;
 use App\Exceptions\FileNotFoundException;
 use App\Models\Email;
 use App\Models\File;
 use App\Models\MigrationProgress;
-use App\Repositories\EmailRepository;
-use App\Repositories\FileRepository;
 use App\ValueObjects\ProcessingResult;
 use Exception;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
-class EmailMigrationService
+class EmailMigrationService implements EmailMigrationServiceInterface
 {
-    private S3Service $s3Service;
-    private EmailRepository $emailRepo;
-    private FileRepository $fileRepo;
+    private S3ServiceInterface $s3Service;
+    private EmailRepositoryInterface $emailRepo;
+    private FileRepositoryInterface $fileRepo;
     private int $batchSize;
     private ?MigrationProgress $progress = null;
 
     public function __construct(
-        S3Service $s3Service,
-        EmailRepository $emailRepo,
-        FileRepository $fileRepo
+        S3ServiceInterface $s3Service,
+        EmailRepositoryInterface $emailRepo,
+        FileRepositoryInterface $fileRepo
     ) {
         $this->s3Service = $s3Service;
         $this->emailRepo = $emailRepo;
