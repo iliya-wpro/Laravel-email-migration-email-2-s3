@@ -1,8 +1,10 @@
-version: '3.8'
+name: s3_migrator
 services:
   app:
+    container_name : mgr_app
     build:
       context: ./docker/php
+    command: /var/www/docker/php/start-app.sh
     volumes:
       - .:/var/www
       - ./storage/app/files:/var/www/storage/app/files
@@ -13,6 +15,7 @@ services:
       - minio
 
   queue-worker:
+    container_name : mgr_queue_worker
     build:
       context: ./docker/php
     command: /var/www/docker/php/start-workers.sh
@@ -35,6 +38,7 @@ services:
     restart: unless-stopped
 
   nginx:
+    container_name: mgr_nginx
     image: nginx:alpine
     ports:
       - "8080:80"
@@ -47,13 +51,14 @@ services:
       - app
 
   db:
+    container_name: mgr_db
     image: postgres:15
     environment:
       POSTGRES_DB: email_migration
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: secret
     ports:
-      - "5432:5432"
+      - "5455:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./docker/postgresql/init.sql:/docker-entrypoint-initdb.d/init.sql
@@ -61,6 +66,7 @@ services:
       - app-network
 
   minio:
+    container_name: mgr_minio
     image: minio/minio
     ports:
       - "9000:9000"

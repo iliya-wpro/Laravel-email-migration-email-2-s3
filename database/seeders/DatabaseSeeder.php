@@ -12,22 +12,35 @@ class DatabaseSeeder extends Seeder
     {
         $this->command->info('Creating 100,000 email records...');
 
-        // Create files first
-        $this->command->info('Creating 1,000 file records...');
-        $files = File::factory()->count(1000)->create()->pluck('id')->toArray();
+        // Create files in batches
+        $this->command->info('Creating 1,000 file records in batches...');
+        $files = [];
+        $fileBatchSize = 10;
+
+        for ($batch = 0; $batch < 100; $batch++) {
+            $batchFiles = File::factory()->count($fileBatchSize)->create()->pluck('id')->toArray();
+            $files = array_merge($files, $batchFiles);
+
+            if (($batch + 1) % 10 === 0) {
+                $this->command->info("Created " . count($files) . " files...");
+            }
+        }
         $this->command->info('Files created successfully.');
 
-        // Create placeholder files on disk
+        // Create placeholder files in batches
         $this->createPlaceholderFiles($files);
 
         $bar = $this->command->getOutput()->createProgressBar(100000);
         $bar->start();
 
-        // Generate emails in chunks
-        for ($i = 0; $i < 100; $i++) {
+        // Generate emails in smaller chunks to save memory
+        $emailBatchSize = 10;
+        $totalBatches = 10000;
+
+        for ($i = 0; $i < $totalBatches; $i++) {
             $emails = [];
 
-            for ($j = 0; $j < 1000; $j++) {
+            for ($j = 0; $j < $emailBatchSize; $j++) {
                 $fileCount = rand(0, 3);
                 $selectedFiles = [];
 
@@ -59,6 +72,11 @@ class DatabaseSeeder extends Seeder
             }
 
             Email::insert($emails);
+
+            // Clear memory periodically
+            if ($i % 100 === 0) {
+                gc_collect_cycles();
+            }
         }
 
         $bar->finish();
@@ -70,10 +88,11 @@ class DatabaseSeeder extends Seeder
 
     private function generateHtmlBody(): string
     {
+        $paragraphCount = rand(3, 10);
         $paragraphs = [];
 
-        for ($i = 0; $i < rand(10, 50); $i++) {
-            $paragraphs[] = '<p>' . fake()->paragraph(rand(5, 15)) . '</p>';
+        for ($i = 0; $i < $paragraphCount; $i++) {
+            $paragraphs[] = '<p>' . fake()->paragraph(rand(3, 8)) . '</p>';
         }
 
         return sprintf(
@@ -87,20 +106,27 @@ class DatabaseSeeder extends Seeder
     {
         $this->command->info('Creating placeholder files on disk...');
 
-        $files = File::whereIn('id', $fileIds)->get();
         $count = 0;
+        $batchSize = 10;
+        $chunks = array_chunk($fileIds, $batchSize);
 
-        foreach ($files as $file) {
-            $fullPath = storage_path('app/' . $file->path);
-            $directory = dirname($fullPath);
+        foreach ($chunks as $chunk) {
+            $files = File::whereIn('id', $chunk)->get();
 
-            if (!is_dir($directory)) {
-                mkdir($directory, 0755, true);
+            foreach ($files as $file) {
+                $fullPath = storage_path('app/' . $file->path);
+                $directory = dirname($fullPath);
+
+                if (!is_dir($directory)) {
+                    mkdir($directory, 0755, true);
+                }
+
+                file_put_contents($fullPath, 'Placeholder content for ' . $file->name);
+                $count++;
             }
 
-            // Create a small placeholder file
-            file_put_contents($fullPath, 'Placeholder content for ' . $file->name);
-            $count++;
+            unset($files);
+            gc_collect_cycles();
         }
 
         $this->command->info("Created {$count} placeholder files.");
