@@ -1,6 +1,7 @@
 version: '3.8'
 services:
   app:
+    container_name : mgr_
     build:
       context: ./docker/php
     volumes:
@@ -13,6 +14,7 @@ services:
       - minio
 
   queue-worker:
+    container_name : mgr_queue-worker
     build:
       context: ./docker/php
     command: /var/www/docker/php/start-workers.sh
@@ -35,6 +37,7 @@ services:
     restart: unless-stopped
 
   nginx:
+    container_name: mgr_nginx
     image: nginx:alpine
     ports:
       - "8080:80"
@@ -47,6 +50,7 @@ services:
       - app
 
   db:
+    container_name: mgr_db
     image: postgres:15
     environment:
       POSTGRES_DB: email_migration
@@ -61,6 +65,7 @@ services:
       - app-network
 
   minio:
+    container_name: mgr_minio
     image: minio/minio
     ports:
       - "9000:9000"
