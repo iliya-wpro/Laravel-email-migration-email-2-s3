@@ -34,9 +34,12 @@ docker-compose up -d
 
 This starts:
 - PHP 8.2 FPM application server
+- Queue worker service (auto-starts workers based on QUEUE_WORKERS env var)
 - Nginx web server (port 8080)
 - PostgreSQL 15 database (port 5432)
 - MinIO S3-compatible storage (ports 9000, 9001)
+
+**Note:** The queue-worker service automatically starts `QUEUE_WORKERS` (default: 10) workers on standby, ready to process migration jobs immediately.
 
 ### 3. Install Dependencies
 ```bash
@@ -105,6 +108,14 @@ MIGRATION_RETRY_DELAY=60       # Delay between retries (seconds)
 MIGRATION_WORKERS=1            # Concurrent workers (future feature)
 MIGRATION_MEMORY_LIMIT=512M    # Memory limit per process
 MIGRATION_CHUNK_TIMEOUT=300    # Timeout per chunk (seconds)
+
+# Queue Worker Settings (auto-started on container startup)
+QUEUE_WORKERS=10               # Number of workers to start automatically
+QUEUE_WORKER_TRIES=3           # Retry attempts per job
+QUEUE_WORKER_TIMEOUT=300       # Job timeout in seconds
+QUEUE_WORKER_MEMORY=256        # Memory limit per worker (MB)
+QUEUE_WORKER_SLEEP=3           # Sleep between jobs (seconds)
+QUEUE_WORKER_MAX_JOBS=1000     # Max jobs before worker restart
 
 # S3/MinIO Settings
 AWS_ACCESS_KEY_ID=minioadmin
@@ -247,10 +258,158 @@ docker-compose logs db
 - **EmailRepository**: Email data access
 - **FileRepository**: File data access
 
+## Queue-Based Asynchronous Migration
+
+The migration system now uses Laravel's queue system for asynchronous, concurrent processing.
+
+### Quick Start - Complete Migration
+
+```bash
+# Run the complete migration process with interactive prompts
+./run-migration.sh
+```
+
+### Step-by-Step Manual Process
+
+#### 1. Dispatch Jobs to Queue
+```bash
+docker-compose exec app php artisan emails:migrate-to-s3
+```
+This loads all email IDs and dispatches individual jobs to the queue.
+
+#### 2. Start Queue Workers
+```bash
+# Start 10 concurrent workers (default)
+./queue-workers.sh start 10
+
+# Or start custom number of workers
+./queue-workers.sh start 20
+```
+
+#### 3. Monitor Progress
+```bash
+# Real-time monitoring
+./queue-workers.sh monitor
+
+# Or one-time status check
+docker-compose exec app php artisan emails:queue-status
+```
+
+### Queue Management Commands
+
+```bash
+# Worker Management
+./queue-workers.sh start [n]     # Start n workers (default: 10)
+./queue-workers.sh stop          # Stop all workers
+./queue-workers.sh status        # Show worker processes
+./queue-workers.sh restart [n]   # Restart with n workers
+
+# Queue Monitoring
+./queue-workers.sh monitor       # Real-time queue monitoring
+docker-compose exec app php artisan emails:queue-status         # One-time status
+docker-compose exec app php artisan emails:queue-status --watch # Continuous monitoring
+
+# Failed Job Management
+./queue-workers.sh retry-failed  # Retry all failed jobs
+./queue-workers.sh clear-failed  # Clear failed jobs
+docker-compose exec app php artisan queue:failed  # List failed jobs
+```
+
+### Performance Tuning
+
+#### Worker Concurrency
+- **Development**: 5-10 workers
+- **Production**: 20-50 workers (depends on server resources)
+
+#### Memory Limits
+Each worker is limited to 256MB. Adjust in `queue-workers.sh` if needed.
+
+#### Job Timeout
+Default timeout is 300 seconds (5 minutes) per job. Adjust for larger files.
+
+### Monitoring Output Example
+
+```
+═══════════════════════════════════════════════════════════
+                EMAIL MIGRATION QUEUE STATUS
+═══════════════════════════════════════════════════════════
+
+Batch ID: abc-123-def-456
+Status: ⚙️  Processing
+
+┌─────────────────────┬────────┬────────────┐
+│ Category            │ Count  │ Percentage │
+├─────────────────────┼────────┼────────────┤
+│ Total Emails        │ 100,000│ 100%       │
+│ Jobs Dispatched     │ 100,000│ 100%       │
+│ Successfully Processed│ 45,230│ 45.23%     │
+│ Failed              │ 120    │ 0.12%      │
+│ Remaining           │ 54,650 │ 54.65%     │
+└─────────────────────┴────────┴────────────┘
+
+Queue Status:
+┌─────────────────────┬────────┐
+│ Queue Metric        │ Value  │
+├─────────────────────┼────────┤
+│ Jobs in Queue       │ 54,530 │
+│ Jobs Being Processed│ 10     │
+│ Failed Jobs         │ 120    │
+└─────────────────────┴────────┘
+
+Performance Metrics:
+┌─────────────────────┬────────────┐
+│ Metric              │ Value      │
+├─────────────────────┼────────────┤
+│ Completion          │ 45.35%     │
+│ Success Rate        │ 99.74%     │
+│ Processing Rate     │ 125.5/min  │
+│ Time Elapsed        │ 06:02:15   │
+│ Est. Time Remaining │ 7.3 hours  │
+└─────────────────────┴────────────┘
+
+▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░░░░░░░░░ 45,350/100,000
+```
+
+### Troubleshooting
+
+#### Workers Not Processing Jobs
+```bash
+# Check worker status
+./queue-workers.sh status
+
+# Restart workers
+./queue-workers.sh restart 10
+
+# Check Laravel logs
+docker-compose exec app tail -f storage/logs/laravel.log
+```
+
+#### High Memory Usage
+```bash
+# Stop workers
+./queue-workers.sh stop
+
+# Start fewer workers with lower memory limit
+docker-compose exec app php artisan queue:work \
+    --queue=email-migration \
+    --memory=128 \
+    --max-jobs=500
+```
+
+#### Failed Jobs
+```bash
+# View failed jobs
+docker-compose exec app php artisan queue:failed
+
+# Retry specific job
+docker-compose exec app php artisan queue:retry [job-id]
+
+# Retry all failed jobs
+./queue-workers.sh retry-failed
+```
+
 ## Future Enhancements
 
-- Concurrent worker support for parallel processing
-- Queue-based processing for distributed migrations
 - Real-time progress webhooks
 - Cloud provider-specific S3 optimization
 - Data validation and integrity checks
