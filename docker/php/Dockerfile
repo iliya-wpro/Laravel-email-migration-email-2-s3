@@ -10,7 +10,8 @@ RUN apt-get update && apt-get install -y \
     libpq-dev \
     zip \
     unzip \
-    procps
+    procps \
+    supervisor
 
 # Clear cache
 RUN apt-get clean && rm -rf /var/lib/apt/lists/*
@@ -23,6 +24,12 @@ COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
 # Set working directory
 WORKDIR /var/www
+
+# Copy supervisor configuration
+COPY supervisor/email-migration.conf /etc/supervisor/conf.d/email-migration.conf
+
+# Create supervisor log directory
+RUN mkdir -p /var/log/supervisor
 
 # Copy existing application directory permissions
 COPY --chown=www-data:www-data . /var/www

@@ -2,104 +2,106 @@
 
 namespace App\Console\Commands;
 
-use App\Contracts\Services\EmailMigrationServiceInterface;
+use App\Jobs\MigrateEmailToS3Job;
+use App\Models\Email;
 use App\Models\MigrationProgress;
-use Exception;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class MigrateEmailsToS3Command extends Command
 {
     protected $signature = 'emails:migrate-to-s3
-                            {--workers=1 : Number of concurrent workers}
+                            {--batch-size=1000 : Number of emails to load per database query}
                             {--resume= : Resume from batch ID}
-                            {--dry-run : Run without making changes}';
+                            {--dry-run : Run without dispatching jobs}';
 
-    protected $description = 'Migrate email bodies and attachments to S3';
-
-    private EmailMigrationServiceInterface $migrationService;
-    private ?string $lockFile = null;
-    private $progressBar = null;
-
-    public function __construct(EmailMigrationServiceInterface $migrationService)
-    {
-        parent::__construct();
-        $this->migrationService = $migrationService;
-    }
+    protected $description = 'Dispatch email migration jobs to queue';
 
     public function handle(): int
     {
-        if (!$this->acquireLock()) {
-            $this->error('Migration is already running.');
-            return 1;
+        $this->info('Starting email migration job dispatch...');
+
+        if ($this->option('dry-run')) {
+            $this->warn('DRY RUN MODE - No jobs will be dispatched.');
         }
 
-        try {
-            $this->info('Starting email migration to S3...');
+        // Initialize or resume progress
+        $progress = $this->initializeOrResume();
 
-            if ($this->option('dry-run')) {
-                $this->warn('DRY RUN MODE - No changes will be made.');
+        // Display initial status
+        $this->displayProgress($progress);
+
+        // Get batch size
+        $batchSize = (int) $this->option('batch-size');
+
+        // Create progress bar
+        $progressBar = $this->output->createProgressBar($progress->total_emails);
+        $progressBar->setProgress($progress->jobs_dispatched);
+
+        // Query emails in chunks
+        $lastId = $progress->last_dispatched_id ?? 0;
+        $totalDispatched = 0;
+
+        do {
+            $emails = Email::where('id', '>', $lastId)
+                ->where('is_migrated', false)
+                ->where('migration_attempts', '<', config('migration.max_attempts'))
+                ->orderBy('id')
+                ->limit($batchSize)
+                ->get(['id']);
+
+            if ($emails->isEmpty()) {
+                break;
             }
 
-            $progress = $this->initializeOrResume();
-
-            $this->displayProgress($progress);
-
-            $this->progressBar = $this->output->createProgressBar($progress->total_emails);
-            $this->progressBar->setProgress($progress->processed_emails);
-
-            while (true) {
-                $result = $this->migrationService->processBatch();
-
-                $this->updateProgressBar($result->processedCount, $result->failedCount);
-
-                if ($result->isComplete) {
-                    break;
+            foreach ($emails as $email) {
+                if (!$this->option('dry-run')) {
+                    // Dispatch job to queue
+                    MigrateEmailToS3Job::dispatch($email->id, $progress->batch_id)
+                        ->onQueue('email-migration')
+                        ->delay(now()->addSeconds($totalDispatched * 0.1)); // Stagger jobs slightly
                 }
 
-                // Prevent memory leaks
-                $this->clearMemory();
+                $totalDispatched++;
+                $progressBar->advance();
+                $lastId = $email->id;
             }
 
-            $this->progressBar->finish();
-            $this->newLine(2);
-            $this->info('Migration completed successfully!');
-
-            $this->displayFinalStats($progress->fresh());
-
-            return 0;
-        } catch (Exception $e) {
-            $this->error('Migration failed: ' . $e->getMessage());
-            Log::error('Migration failed', ['error' => $e]);
-            return 1;
-        } finally {
-            $this->releaseLock();
-        }
-    }
-
-    private function acquireLock(): bool
-    {
-        $this->lockFile = storage_path('app/migration.lock');
-
-        if (file_exists($this->lockFile)) {
-            $pid = (int) file_get_contents($this->lockFile);
-
-            // Check if process is still running (POSIX systems)
-            if ($pid > 0 && function_exists('posix_getsid') && posix_getsid($pid) !== false) {
-                return false;
+            // Update progress after each batch
+            if (!$this->option('dry-run')) {
+                $progress->update([
+                    'last_dispatched_id' => $lastId,
+                    'jobs_dispatched' => $progress->jobs_dispatched + $emails->count(),
+                    'status' => 'processing'
+                ]);
             }
+
+            // Free memory
+            unset($emails);
+
+        } while (true);
+
+        $progressBar->finish();
+        $this->newLine(2);
+
+        if ($totalDispatched === 0) {
+            $this->info('No emails found to migrate.');
+            $progress->update([
+                'status' => 'completed',
+                'completed_at' => now()
+            ]);
+        } else {
+            $this->info("Successfully dispatched {$totalDispatched} migration jobs to queue.");
+            $this->newLine();
+            $this->warn('IMPORTANT: Jobs are now in the queue. Start queue workers to process them:');
+            $this->line('docker-compose exec app php artisan queue:work --queue=email-migration --tries=3 --timeout=300');
+            $this->newLine();
+            $this->info('To run multiple concurrent workers (e.g., 10 workers):');
+            $this->line('docker-compose exec app supervisorctl start email-migration:*');
         }
 
-        file_put_contents($this->lockFile, getmypid());
-        return true;
-    }
-
-    private function releaseLock(): void
-    {
-        if ($this->lockFile && file_exists($this->lockFile)) {
-            unlink($this->lockFile);
-        }
+        return 0;
     }
 
     private function initializeOrResume(): MigrationProgress
@@ -108,24 +110,31 @@ class MigrateEmailsToS3Command extends Command
             $progress = MigrationProgress::where('batch_id', $batchId)->first();
 
             if (!$progress) {
-                throw new Exception("Batch ID not found: {$batchId}");
+                throw new \Exception("Batch ID not found: {$batchId}");
             }
 
             $this->info("Resuming migration from batch: {$batchId}");
-            $this->migrationService->setProgress($progress);
             return $progress;
         }
 
-        return $this->migrationService->initializeMigration();
-    }
+        // Create new batch
+        $batchId = Str::uuid()->toString();
 
-    private function clearMemory(): void
-    {
-        if (memory_get_usage() > 100 * 1024 * 1024) { // 100MB
-            DB::connection()->disconnect();
-            DB::connection()->reconnect();
-            gc_collect_cycles();
-        }
+        $totalEmails = Email::where('is_migrated', false)
+            ->where('migration_attempts', '<', config('migration.max_attempts'))
+            ->count();
+
+        return MigrationProgress::create([
+            'batch_id' => $batchId,
+            'last_processed_email_id' => 0,
+            'last_dispatched_id' => 0,
+            'total_emails' => $totalEmails,
+            'jobs_dispatched' => 0,
+            'processed_emails' => 0,
+            'failed_emails' => 0,
+            'status' => 'pending',
+            'started_at' => now(),
+        ]);
     }
 
     private function displayProgress(MigrationProgress $progress): void
@@ -135,48 +144,10 @@ class MigrateEmailsToS3Command extends Command
             [
                 ['Batch ID', $progress->batch_id],
                 ['Total Emails', number_format($progress->total_emails)],
+                ['Jobs Dispatched', number_format($progress->jobs_dispatched)],
                 ['Processed', number_format($progress->processed_emails)],
                 ['Failed', number_format($progress->failed_emails)],
-                ['Last ID', $progress->last_processed_email_id],
-            ]
-        );
-    }
-
-    private function updateProgressBar(int $processed, int $failed): void
-    {
-        if ($this->progressBar) {
-            $this->progressBar->advance($processed + $failed);
-        }
-
-        if ($failed > 0) {
-            $this->newLine();
-            $this->warn("Batch completed: {$processed} processed, {$failed} failed");
-        }
-    }
-
-    private function displayFinalStats(MigrationProgress $progress): void
-    {
-        $duration = $progress->started_at
-            ? now()->diffInMinutes($progress->started_at)
-            : 0;
-
-        $rate = $duration > 0
-            ? round($progress->processed_emails / $duration, 2)
-            : 0;
-
-        $successRate = $progress->processed_emails > 0
-            ? round(($progress->processed_emails - $progress->failed_emails) / $progress->processed_emails * 100, 2)
-            : 0;
-
-        $this->table(
-            ['Final Statistics', 'Value'],
-            [
-                ['Total Duration', "{$duration} minutes"],
-                ['Emails Processed', number_format($progress->processed_emails)],
-                ['Emails Failed', number_format($progress->failed_emails)],
-                ['Success Rate', "{$successRate}%"],
-                ['Processing Rate', "{$rate} emails/min"],
-                ['Completed At', $progress->completed_at],
+                ['Status', $progress->status],
             ]
         );
     }
