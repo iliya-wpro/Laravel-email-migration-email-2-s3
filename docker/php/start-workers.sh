@@ -21,6 +21,13 @@ echo "  Sleep: ${SLEEP}s"
 echo "  Max Jobs: $MAX_JOBS"
 echo "========================================="
 
+# Install composer dependencies if not present
+if [ ! -f /var/www/vendor/autoload.php ]; then
+    echo "Installing Composer dependencies..."
+    cd /var/www && composer install --no-interaction --prefer-dist --optimize-autoloader
+    echo "Dependencies installed successfully!"
+fi
+
 # Wait for database to be ready
 echo "Waiting for database connection..."
 sleep 5
