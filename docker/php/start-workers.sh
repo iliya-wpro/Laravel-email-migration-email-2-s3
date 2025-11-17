@@ -40,6 +40,10 @@ fi
 echo "Running database migrations..."
 php /var/www/artisan migrate --force --no-interaction 2>/dev/null || echo "Migrations skipped (may already exist)"
 
+# Create S3 bucket if it does not exist
+echo "Ensuring S3 bucket exists..."
+php /var/www/artisan storage:create-bucket 2>/dev/null || echo "Bucket creation skipped"
+
 # Wait for database to be ready
 echo "Waiting for database connection..."
 sleep 5
