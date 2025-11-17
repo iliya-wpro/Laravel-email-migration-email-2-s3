@@ -34,9 +34,12 @@ docker-compose up -d
 
 This starts:
 - PHP 8.2 FPM application server
+- Queue worker service (auto-starts workers based on QUEUE_WORKERS env var)
 - Nginx web server (port 8080)
 - PostgreSQL 15 database (port 5432)
 - MinIO S3-compatible storage (ports 9000, 9001)
+
+**Note:** The queue-worker service automatically starts `QUEUE_WORKERS` (default: 10) workers on standby, ready to process migration jobs immediately.
 
 ### 3. Install Dependencies
 ```bash
@@ -105,6 +108,14 @@ MIGRATION_RETRY_DELAY=60       # Delay between retries (seconds)
 MIGRATION_WORKERS=1            # Concurrent workers (future feature)
 MIGRATION_MEMORY_LIMIT=512M    # Memory limit per process
 MIGRATION_CHUNK_TIMEOUT=300    # Timeout per chunk (seconds)
+
+# Queue Worker Settings (auto-started on container startup)
+QUEUE_WORKERS=10               # Number of workers to start automatically
+QUEUE_WORKER_TRIES=3           # Retry attempts per job
+QUEUE_WORKER_TIMEOUT=300       # Job timeout in seconds
+QUEUE_WORKER_MEMORY=256        # Memory limit per worker (MB)
+QUEUE_WORKER_SLEEP=3           # Sleep between jobs (seconds)
+QUEUE_WORKER_MAX_JOBS=1000     # Max jobs before worker restart
 
 # S3/MinIO Settings
 AWS_ACCESS_KEY_ID=minioadmin

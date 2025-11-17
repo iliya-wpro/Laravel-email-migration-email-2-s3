@@ -12,6 +12,28 @@ services:
       - db
       - minio
 
+  queue-worker:
+    build:
+      context: ./docker/php
+    command: /var/www/docker/php/start-workers.sh
+    volumes:
+      - .:/var/www
+      - ./storage/app/files:/var/www/storage/app/files
+    environment:
+      - QUEUE_WORKERS=${QUEUE_WORKERS:-10}
+      - QUEUE_WORKER_TRIES=${QUEUE_WORKER_TRIES:-3}
+      - QUEUE_WORKER_TIMEOUT=${QUEUE_WORKER_TIMEOUT:-300}
+      - QUEUE_WORKER_MEMORY=${QUEUE_WORKER_MEMORY:-256}
+      - QUEUE_WORKER_SLEEP=${QUEUE_WORKER_SLEEP:-3}
+      - QUEUE_WORKER_MAX_JOBS=${QUEUE_WORKER_MAX_JOBS:-1000}
+    networks:
+      - app-network
+    depends_on:
+      - db
+      - minio
+      - app
+    restart: unless-stopped
+
   nginx:
     image: nginx:alpine
     ports:
