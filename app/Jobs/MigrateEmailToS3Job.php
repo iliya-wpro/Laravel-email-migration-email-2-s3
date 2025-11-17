@@ -254,29 +254,32 @@ class MigrateEmailToS3Job implements ShouldQueue
      */
     private function updateProgress(bool $success, bool $failed): void
     {
-        $progress = MigrationProgress::where('batch_id', $this->batchId)
-            ->lockForUpdate()
-            ->first();
+        // Use atomic increments without row locks to allow parallel updates
+        $updates = [];
+        if ($success) {
+            $updates['processed_emails'] = DB::raw('processed_emails + 1');
+        }
+        if ($failed) {
+            $updates['failed_emails'] = DB::raw('failed_emails + 1');
+        }
 
-        if (!$progress) {
+        if (empty($updates)) {
             return;
         }
 
-        if ($success) {
-            $progress->increment('processed_emails');
-        }
+        // Perform atomic update without locking
+        MigrationProgress::where('batch_id', $this->batchId)->update($updates);
 
-        if ($failed) {
-            $progress->increment('failed_emails');
-        }
-
-        // Check if migration is complete
-        $totalProcessed = $progress->processed_emails + $progress->failed_emails;
-        if ($totalProcessed >= $progress->total_emails) {
-            $progress->update([
-                'status' => 'completed',
-                'completed_at' => now()
-            ]);
+        // Check if migration is complete (separate query to avoid lock contention)
+        $progress = MigrationProgress::where('batch_id', $this->batchId)->first();
+        if ($progress) {
+            $totalProcessed = $progress->processed_emails + $progress->failed_emails;
+            if ($totalProcessed >= $progress->total_emails && $progress->status !== 'completed') {
+                $progress->update([
+                    'status' => 'completed',
+                    'completed_at' => now()
+                ]);
+            }
         }
     }
 

@@ -10,9 +10,50 @@ class MonitoringController
 {
     public function dashboard(): View
     {
-        $stats = $this->gatherStats();
+        try {
+            $stats = $this->gatherStats();
+        } catch (\Exception $e) {
+            $stats = $this->getEmptyStats($e->getMessage());
+        }
 
         return view('monitoring.dashboard', compact('stats'));
+    }
+
+    private function getEmptyStats(string $error = ''): array
+    {
+        return [
+            'queue' => [
+                'pending' => 0,
+                'failed' => 0,
+                'oldest_job_age' => 0,
+                'queue_health' => 'unknown',
+            ],
+            'migration' => [
+                'status' => 'Database not available',
+                'total_emails' => 0,
+                'processed' => 0,
+                'failed' => 0,
+                'success_rate' => 0,
+                'started_at' => null,
+                'completed_at' => null,
+            ],
+            'system' => $this->getSystemStats(),
+            'recent_errors' => [],
+            'performance' => [
+                'emails_per_minute' => 0,
+                'estimated_completion' => null,
+                'elapsed_time' => 0,
+            ],
+            'workers' => [
+                'configured' => (int) env('QUEUE_WORKERS', 10),
+                'active' => 0,
+                'idle' => (int) env('QUEUE_WORKERS', 10),
+                'throughput_per_worker' => 0,
+                'avg_jobs_per_worker' => 0,
+                'utilization' => 0,
+            ],
+            'error' => $error,
+        ];
     }
 
     private function gatherStats(): array
@@ -23,26 +64,33 @@ class MonitoringController
             'system' => $this->getSystemStats(),
             'recent_errors' => $this->getRecentErrors(),
             'performance' => $this->getPerformanceStats(),
+            'workers' => $this->getWorkerStats(),
         ];
     }
 
     private function getQueueStats(): array
     {
-        $jobs = DB::table('jobs')->get();
-        $failedJobs = DB::table('failed_jobs')->get();
+        // Use count() instead of get() to avoid loading all jobs into memory
+        $pending = DB::table('jobs')->count();
+        $failed = DB::table('failed_jobs')->count();
 
-        $pending = $jobs->count();
-        $failed = $failedJobs->count();
+        // Get only the oldest job's created_at timestamp
+        $oldestJob = DB::table('jobs')
+            ->orderBy('created_at', 'asc')
+            ->first(['created_at']);
 
-        $oldestJob = $jobs->sortBy('created_at')->first();
-        $oldestTimestamp = $oldestJob ? $oldestJob->created_at : null;
+        $oldestJobAge = 0;
+        if ($oldestJob && $oldestJob->created_at) {
+            // created_at is a UNIX timestamp, convert it properly
+            $oldestJobTime = \Carbon\Carbon::createFromTimestamp($oldestJob->created_at);
+            // Calculate the absolute difference in minutes
+            $oldestJobAge = abs($oldestJobTime->diffInMinutes(now(), false));
+        }
 
         return [
             'pending' => $pending,
             'failed' => $failed,
-            'oldest_job_age' => $oldestTimestamp
-                ? now()->diffInMinutes(\Carbon\Carbon::createFromTimestamp($oldestTimestamp))
-                : 0,
+            'oldest_job_age' => round($oldestJobAge, 2),
             'queue_health' => $this->determineQueueHealth($pending, $failed),
         ];
     }
@@ -121,7 +169,8 @@ class MonitoringController
             ];
         }
 
-        $elapsedMinutes = now()->diffInMinutes($progress->started_at);
+        // Calculate elapsed time as absolute difference to ensure positive value
+        $elapsedMinutes = abs($progress->started_at->diffInMinutes(now(), false));
         $emailsPerMinute = $elapsedMinutes > 0
             ? round($progress->processed_emails / $elapsedMinutes, 2)
             : 0;
@@ -134,7 +183,7 @@ class MonitoringController
         return [
             'emails_per_minute' => $emailsPerMinute,
             'estimated_completion' => $estimatedMinutes,
-            'elapsed_time' => $elapsedMinutes,
+            'elapsed_time' => round($elapsedMinutes, 2),
         ];
     }
 
@@ -157,6 +206,48 @@ class MonitoringController
             return 'warning';
         }
         return 'healthy';
+    }
+
+    private function getWorkerStats(): array
+    {
+        // Get configured number of workers from environment
+        $configuredWorkers = (int) env('QUEUE_WORKERS', 10);
+
+        // Count jobs currently being processed (reserved but not yet completed)
+        // Jobs with reserved_at timestamp are currently being processed
+        $activeJobs = DB::table('jobs')
+            ->whereNotNull('reserved_at')
+            ->count();
+
+        // Get migration progress to calculate per-worker throughput
+        $progress = MigrationProgress::latest()->first();
+
+        $throughputPerWorker = 0;
+        $avgJobsPerWorker = 0;
+
+        if ($progress && $progress->started_at) {
+            $elapsedMinutes = abs($progress->started_at->diffInMinutes(now(), false));
+
+            if ($elapsedMinutes > 0 && $configuredWorkers > 0) {
+                // Calculate emails processed per worker per minute
+                $totalEmailsPerMinute = $progress->processed_emails / $elapsedMinutes;
+                $throughputPerWorker = round($totalEmailsPerMinute / $configuredWorkers, 2);
+
+                // Calculate average jobs processed per worker
+                $avgJobsPerWorker = round($progress->processed_emails / $configuredWorkers, 0);
+            }
+        }
+
+        return [
+            'configured' => $configuredWorkers,
+            'active' => $activeJobs,
+            'idle' => max(0, $configuredWorkers - $activeJobs),
+            'throughput_per_worker' => $throughputPerWorker,
+            'avg_jobs_per_worker' => $avgJobsPerWorker,
+            'utilization' => $configuredWorkers > 0
+                ? round(($activeJobs / $configuredWorkers) * 100, 1)
+                : 0,
+        ];
     }
 
     private function getServerUptime(): string

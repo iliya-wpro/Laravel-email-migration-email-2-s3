@@ -58,7 +58,6 @@ class S3Service implements S3ServiceInterface
             'Key' => $key,
             'Body' => $content,
             'ContentType' => $contentType,
-            'ServerSideEncryption' => 'AES256',
         ]);
 
         return $key;
@@ -77,7 +76,6 @@ class S3Service implements S3ServiceInterface
             'Bucket' => $this->bucket,
             'Key' => $key,
             'SourceFile' => $localPath,
-            'ServerSideEncryption' => 'AES256',
         ]);
 
         return $key;

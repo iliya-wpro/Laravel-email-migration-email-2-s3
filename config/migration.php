@@ -1,5 +1,5 @@
 <?php
-
+// TODO later optimizistions for enebling fine tunnig - chears to Zdravko ;) 
 return [
     'batch_size' => env('MIGRATION_BATCH_SIZE', 10),
     'max_attempts' => env('MIGRATION_MAX_ATTEMPTS', 3),

@@ -24,11 +24,23 @@ fi
 
 # Wait for database to be ready
 echo "Waiting for database..."
-sleep 5
+MAX_TRIES=30
+COUNTER=0
+until php /var/www/artisan tinker --execute="DB::connection()->getPdo();" 2>/dev/null || [ $COUNTER -eq $MAX_TRIES ]; do
+    echo "Waiting for database connection... (attempt $((COUNTER+1))/$MAX_TRIES)"
+    sleep 2
+    COUNTER=$((COUNTER+1))
+done
+
+if [ $COUNTER -eq $MAX_TRIES ]; then
+    echo "Warning: Database connection timeout after $MAX_TRIES attempts. Continuing anyway..."
+else
+    echo "Database connection established!"
+fi
 
 # Run database migrations
 echo "Running database migrations..."
-php /var/www/artisan migrate --force --no-interaction
+php /var/www/artisan migrate --force --no-interaction || echo "Migration warning: $?"
 
 # Create S3 bucket if it does not exist
 echo "Ensuring S3 bucket exists..."

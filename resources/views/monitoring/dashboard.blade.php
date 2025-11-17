@@ -150,6 +150,21 @@
             <div class="timestamp">Last updated: {{ now()->format('Y-m-d H:i:s') }} UTC</div>
         </div>
 
+        @if(isset($stats['error']) && $stats['error'])
+        <div class="card full-width" style="background: #7f1d1d; border-color: #991b1b;">
+            <div class="card-header">
+                <span class="card-title" style="color: #fca5a5;">System Error</span>
+                <span class="status-badge status-critical">Error</span>
+            </div>
+            <div style="color: #fecaca;">
+                <strong>Unable to connect to database or fetch statistics:</strong><br>
+                <code style="background: #450a0a; padding: 8px; border-radius: 4px; display: block; margin-top: 10px; font-size: 12px;">
+                    {{ $stats['error'] }}
+                </code>
+            </div>
+        </div>
+        @endif
+
         <div class="grid">
             <!-- Queue Health -->
             <div class="card">
@@ -211,6 +226,32 @@
                             N/A
                         @endif
                     </span>
+                </div>
+            </div>
+
+            <!-- Worker Status -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Concurrent Workers</span>
+                    <span class="status-badge" style="background: #1e3a5f; color: #60a5fa;">
+                        {{ $stats['workers']['utilization'] }}% utilized
+                    </span>
+                </div>
+                <div class="big-number">{{ $stats['workers']['active'] }}/{{ $stats['workers']['configured'] }}</div>
+                <div class="big-label">Active Workers</div>
+                <div class="metric">
+                    <span class="metric-label">Idle Workers</span>
+                    <span class="metric-value" style="color: {{ $stats['workers']['idle'] > 0 ? '#94a3b8' : '#fbbf24' }}">
+                        {{ $stats['workers']['idle'] }}
+                    </span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Throughput per Worker</span>
+                    <span class="metric-value">{{ $stats['workers']['throughput_per_worker'] }} emails/min</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Avg Jobs per Worker</span>
+                    <span class="metric-value">{{ number_format($stats['workers']['avg_jobs_per_worker']) }}</span>
                 </div>
             </div>
 
