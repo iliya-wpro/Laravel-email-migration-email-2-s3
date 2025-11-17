@@ -28,6 +28,18 @@ if [ ! -f /var/www/vendor/autoload.php ]; then
     echo "Dependencies installed successfully!"
 fi
 
+# Setup environment if not present
+if [ ! -f /var/www/.env ]; then
+    echo "Setting up environment..."
+    cp /var/www/.env.example /var/www/.env
+    php /var/www/artisan key:generate --no-interaction
+    echo "Environment configured!"
+fi
+
+# Run database migrations
+echo "Running database migrations..."
+php /var/www/artisan migrate --force --no-interaction 2>/dev/null || echo "Migrations skipped (may already exist)"
+
 # Wait for database to be ready
 echo "Waiting for database connection..."
 sleep 5
