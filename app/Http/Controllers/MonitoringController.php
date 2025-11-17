@@ -10,9 +10,42 @@ class MonitoringController
 {
     public function dashboard(): View
     {
-        $stats = $this->gatherStats();
+        try {
+            $stats = $this->gatherStats();
+        } catch (\Exception $e) {
+            $stats = $this->getEmptyStats($e->getMessage());
+        }
 
         return view('monitoring.dashboard', compact('stats'));
+    }
+
+    private function getEmptyStats(string $error = ''): array
+    {
+        return [
+            'queue' => [
+                'pending' => 0,
+                'failed' => 0,
+                'oldest_job_age' => 0,
+                'queue_health' => 'unknown',
+            ],
+            'migration' => [
+                'status' => 'Database not available',
+                'total_emails' => 0,
+                'processed' => 0,
+                'failed' => 0,
+                'success_rate' => 0,
+                'started_at' => null,
+                'completed_at' => null,
+            ],
+            'system' => $this->getSystemStats(),
+            'recent_errors' => [],
+            'performance' => [
+                'emails_per_minute' => 0,
+                'estimated_completion' => null,
+                'elapsed_time' => 0,
+            ],
+            'error' => $error,
+        ];
     }
 
     private function gatherStats(): array

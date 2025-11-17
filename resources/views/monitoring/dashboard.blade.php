@@ -150,6 +150,21 @@
             <div class="timestamp">Last updated: {{ now()->format('Y-m-d H:i:s') }} UTC</div>
         </div>
 
+        @if(isset($stats['error']) && $stats['error'])
+        <div class="card full-width" style="background: #7f1d1d; border-color: #991b1b;">
+            <div class="card-header">
+                <span class="card-title" style="color: #fca5a5;">System Error</span>
+                <span class="status-badge status-critical">Error</span>
+            </div>
+            <div style="color: #fecaca;">
+                <strong>Unable to connect to database or fetch statistics:</strong><br>
+                <code style="background: #450a0a; padding: 8px; border-radius: 4px; display: block; margin-top: 10px; font-size: 12px;">
+                    {{ $stats['error'] }}
+                </code>
+            </div>
+        </div>
+        @endif
+
         <div class="grid">
             <!-- Queue Health -->
             <div class="card">
