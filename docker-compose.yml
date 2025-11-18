@@ -13,6 +13,7 @@ services:
     depends_on:
       - db
       - minio
+      - redis
 
   queue-worker:
     container_name : mgr_queue_worker
@@ -34,6 +35,7 @@ services:
     depends_on:
       - db
       - minio
+      - redis
       - app
     restart: unless-stopped
 
@@ -79,6 +81,15 @@ services:
       - ./storage/minio:/data
     networks:
       - app-network
+
+  redis:
+    container_name: mgr_redis
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - app-network
+    restart: unless-stopped
 
 networks:
   app-network:

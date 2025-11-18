@@ -2,13 +2,10 @@
 
 namespace App\Jobs;
 
-use App\Contracts\Repositories\EmailRepositoryInterface;
-use App\Contracts\Repositories\FileRepositoryInterface;
 use App\Contracts\Services\S3ServiceInterface;
 use App\Exceptions\FileNotFoundException;
 use App\Models\Email;
 use App\Models\File;
-use App\Models\MigrationProgress;
 use Exception;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -71,28 +68,23 @@ class MigrateEmailToS3Job implements ShouldQueue
      */
     public function handle(): void
     {
-        $s3Service = app(S3ServiceInterface::class);
-        $emailRepo = app(EmailRepositoryInterface::class);
-        $fileRepo = app(FileRepositoryInterface::class);
+        // Phase 2 Optimization: Remove transaction wrapper
+        // Only use transactions for critical DB updates, not S3 uploads
 
-        DB::beginTransaction();
+        $s3Service = app(S3ServiceInterface::class);
 
         try {
-            // Find the email
-            $email = $emailRepo->find($this->emailId);
+            // Direct query - remove repository overhead
+            $email = Email::find($this->emailId);
 
             if (!$email) {
                 Log::error("Email not found", ['email_id' => $this->emailId]);
-                DB::rollBack();
                 return;
             }
 
             // Skip if already migrated
             if ($email->is_migrated) {
-                Log::info("Email already migrated", ['email_id' => $this->emailId]);
-                DB::rollBack();
-                $this->updateProgress(false, false);
-                return;
+                return; // Already done
             }
 
             // Skip if exceeded max attempts
@@ -101,39 +93,24 @@ class MigrateEmailToS3Job implements ShouldQueue
                     'email_id' => $this->emailId,
                     'attempts' => $email->migration_attempts
                 ]);
-                DB::rollBack();
-                $this->updateProgress(false, true);
                 return;
             }
 
-            // Upload HTML body
+            // Upload to S3 (NO transaction - external service)
             $bodyPath = $this->uploadEmailBody($email, $s3Service);
+            $attachmentPaths = $this->uploadAttachments($email, $s3Service);
 
-            // Upload attachments
-            $attachmentPaths = $this->uploadAttachments($email, $s3Service, $fileRepo);
-
-            // Update email record
-            $email->update([
-                'body_s3_path' => $bodyPath,
-                'file_s3_paths' => $attachmentPaths,
-                'is_migrated' => true,
-                'migration_attempted_at' => now(),
-            ]);
-
-            DB::commit();
-
-            // Update progress tracker
-            $this->updateProgress(true, false);
-
-            Log::info("Email migrated successfully", [
-                'email_id' => $this->emailId,
-                'body_path' => $bodyPath,
-                'attachments' => count($attachmentPaths)
-            ]);
+            // Only transaction for final DB update (critical section)
+            DB::transaction(function () use ($email, $bodyPath, $attachmentPaths) {
+                $email->update([
+                    'body_s3_path' => $bodyPath,
+                    'file_s3_paths' => $attachmentPaths,
+                    'is_migrated' => true,
+                    'migration_attempted_at' => now(),
+                ]);
+            });
 
         } catch (Exception $e) {
-            DB::rollBack();
-
             // Update email with failure info
             Email::where('id', $this->emailId)
                 ->increment('migration_attempts', 1, [
@@ -141,13 +118,9 @@ class MigrateEmailToS3Job implements ShouldQueue
                     'migration_error' => $e->getMessage()
                 ]);
 
-            // Update progress tracker
-            $this->updateProgress(false, true);
-
             Log::error("Email migration failed", [
                 'email_id' => $this->emailId,
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
             ]);
 
             // Re-throw to trigger retry mechanism
@@ -186,11 +159,9 @@ class MigrateEmailToS3Job implements ShouldQueue
      * @return array Map of file IDs to S3 paths
      * @throws FileNotFoundException
      */
-    private function uploadAttachments(
-        Email $email,
-        S3ServiceInterface $s3Service,
-        FileRepositoryInterface $fileRepo
-    ): array {
+    private function uploadAttachments(Email $email, S3ServiceInterface $s3Service): array
+    {
+        // Phase 2: Remove repository overhead - use direct queries
         $paths = [];
         $fileIds = $email->file_ids ?? [];
 
@@ -199,9 +170,9 @@ class MigrateEmailToS3Job implements ShouldQueue
         }
 
         foreach ($fileIds as $fileId) {
-            $file = $fileRepo->find($fileId);
+            $file = File::find($fileId); // Direct query
             if (!$file) {
-                Log::warning("File not found for email attachment", [
+                Log::warning("File not found", [
                     'email_id' => $email->id,
                     'file_id' => $fileId
                 ]);
@@ -245,43 +216,6 @@ class MigrateEmailToS3Job implements ShouldQueue
         return $s3Service->uploadFile($localPath, $s3Path);
     }
 
-    /**
-     * Update migration progress.
-     *
-     * @param bool $success
-     * @param bool $failed
-     * @return void
-     */
-    private function updateProgress(bool $success, bool $failed): void
-    {
-        // Use atomic increments without row locks to allow parallel updates
-        $updates = [];
-        if ($success) {
-            $updates['processed_emails'] = DB::raw('processed_emails + 1');
-        }
-        if ($failed) {
-            $updates['failed_emails'] = DB::raw('failed_emails + 1');
-        }
-
-        if (empty($updates)) {
-            return;
-        }
-
-        // Perform atomic update without locking
-        MigrationProgress::where('batch_id', $this->batchId)->update($updates);
-
-        // Check if migration is complete (separate query to avoid lock contention)
-        $progress = MigrationProgress::where('batch_id', $this->batchId)->first();
-        if ($progress) {
-            $totalProcessed = $progress->processed_emails + $progress->failed_emails;
-            if ($totalProcessed >= $progress->total_emails && $progress->status !== 'completed') {
-                $progress->update([
-                    'status' => 'completed',
-                    'completed_at' => now()
-                ]);
-            }
-        }
-    }
 
     /**
      * Handle a job failure.
@@ -303,8 +237,5 @@ class MigrateEmailToS3Job implements ShouldQueue
             'migration_error' => 'Job permanently failed: ' . $exception->getMessage(),
             'migration_attempted_at' => now()
         ]);
-
-        // Update progress
-        $this->updateProgress(false, true);
     }
 }

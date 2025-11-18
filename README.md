@@ -106,7 +106,3 @@ docker-compose exec queue-worker ps aux | grep "queue:work"
 ```bash
 docker-compose exec app tail -f storage/logs/laravel.log
 ```
-
-## License
-
-MIT License

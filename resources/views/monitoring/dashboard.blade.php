@@ -188,24 +188,6 @@
                 </div>
             </div>
 
-            <!-- Migration Progress -->
-            <div class="card">
-                <div class="card-header">
-                    <span class="card-title">Migration Progress</span>
-                    <span class="status-badge status-{{ $stats['migration']['status'] }}">
-                        {{ str_replace('_', ' ', $stats['migration']['status']) }}
-                    </span>
-                </div>
-                <div class="big-number">{{ $stats['migration']['success_rate'] }}%</div>
-                <div class="big-label">Success Rate</div>
-                <div class="progress-bar">
-                    <div class="progress-fill" style="width: {{ $stats['migration']['success_rate'] }}%"></div>
-                </div>
-                <div class="progress-text">
-                    {{ number_format($stats['migration']['processed']) }} / {{ number_format($stats['migration']['total_emails']) }} emails processed
-                </div>
-            </div>
-
             <!-- Performance -->
             <div class="card">
                 <div class="card-header">
@@ -213,6 +195,10 @@
                 </div>
                 <div class="big-number">{{ $stats['performance']['emails_per_minute'] }}</div>
                 <div class="big-label">Emails per Minute</div>
+                <div class="metric">
+                    <span class="metric-label">Concurrent Workers</span>
+                    <span class="metric-value">{{ $stats['workers']['configured'] }}</span>
+                </div>
                 <div class="metric">
                     <span class="metric-label">Elapsed Time</span>
                     <span class="metric-value">{{ $stats['performance']['elapsed_time'] }} min</span>
@@ -226,32 +212,6 @@
                             N/A
                         @endif
                     </span>
-                </div>
-            </div>
-
-            <!-- Worker Status -->
-            <div class="card">
-                <div class="card-header">
-                    <span class="card-title">Concurrent Workers</span>
-                    <span class="status-badge" style="background: #1e3a5f; color: #60a5fa;">
-                        {{ $stats['workers']['utilization'] }}% utilized
-                    </span>
-                </div>
-                <div class="big-number">{{ $stats['workers']['active'] }}/{{ $stats['workers']['configured'] }}</div>
-                <div class="big-label">Active Workers</div>
-                <div class="metric">
-                    <span class="metric-label">Idle Workers</span>
-                    <span class="metric-value" style="color: {{ $stats['workers']['idle'] > 0 ? '#94a3b8' : '#fbbf24' }}">
-                        {{ $stats['workers']['idle'] }}
-                    </span>
-                </div>
-                <div class="metric">
-                    <span class="metric-label">Throughput per Worker</span>
-                    <span class="metric-value">{{ $stats['workers']['throughput_per_worker'] }} emails/min</span>
-                </div>
-                <div class="metric">
-                    <span class="metric-label">Avg Jobs per Worker</span>
-                    <span class="metric-value">{{ number_format($stats['workers']['avg_jobs_per_worker']) }}</span>
                 </div>
             </div>
 
@@ -293,44 +253,34 @@
             </div>
 
             <!-- Migration Details -->
-            <div class="card full-width">
+            <div class="card">
                 <div class="card-header">
                     <span class="card-title">Migration Details</span>
                 </div>
-                <div class="grid two-col">
-                    <div>
-                        <div class="metric">
-                            <span class="metric-label">Total Emails</span>
-                            <span class="metric-value">{{ number_format($stats['migration']['total_emails']) }}</span>
-                        </div>
-                        <div class="metric">
-                            <span class="metric-label">Processed</span>
-                            <span class="metric-value" style="color: #34d399">{{ number_format($stats['migration']['processed']) }}</span>
-                        </div>
-                        <div class="metric">
-                            <span class="metric-label">Failed</span>
-                            <span class="metric-value" style="color: #f87171">{{ number_format($stats['migration']['failed']) }}</span>
-                        </div>
-                    </div>
-                    <div>
-                        <div class="metric">
-                            <span class="metric-label">Started At</span>
-                            <span class="metric-value">{{ $stats['migration']['started_at'] ?? 'N/A' }}</span>
-                        </div>
-                        <div class="metric">
-                            <span class="metric-label">Completed At</span>
-                            <span class="metric-value">{{ $stats['migration']['completed_at'] ?? 'In Progress' }}</span>
-                        </div>
-                        @if(isset($stats['migration']['last_error']) && $stats['migration']['last_error'])
-                        <div class="metric">
-                            <span class="metric-label">Last Error</span>
-                            <span class="metric-value" style="color: #f87171; font-size: 12px;">
-                                {{ Str::limit($stats['migration']['last_error'], 100) }}
-                            </span>
-                        </div>
-                        @endif
-                    </div>
+                <div class="metric">
+                    <span class="metric-label">Total Emails</span>
+                    <span class="metric-value">{{ number_format($stats['migration']['total_emails']) }}</span>
                 </div>
+                <div class="metric">
+                    <span class="metric-label">Processed</span>
+                    <span class="metric-value" style="color: #34d399">{{ number_format($stats['migration']['processed']) }}</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Failed</span>
+                    <span class="metric-value" style="color: #f87171">{{ number_format($stats['migration']['failed']) }}</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Pending</span>
+                    <span class="metric-value">{{ number_format($stats['migration']['total_emails'] - $stats['migration']['processed'] - $stats['migration']['failed']) }}</span>
+                </div>
+                @if(isset($stats['migration']['last_error']) && $stats['migration']['last_error'])
+                <div class="metric">
+                    <span class="metric-label">Last Error</span>
+                    <span class="metric-value" style="color: #f87171; font-size: 12px;">
+                        {{ Str::limit($stats['migration']['last_error'], 100) }}
+                    </span>
+                </div>
+                @endif
             </div>
 
             <!-- Recent Errors -->
