@@ -70,6 +70,44 @@ class MonitoringController
 
     private function getQueueStats(): array
     {
+        $queueDriver = config('queue.default');
+
+        if ($queueDriver === 'redis') {
+            return $this->getRedisQueueStats();
+        }
+
+        return $this->getDatabaseQueueStats();
+    }
+
+    private function getRedisQueueStats(): array
+    {
+        try {
+            $queueName = 'queues:email-migration';
+
+            // Get pending jobs count from Redis
+            $pending = \Illuminate\Support\Facades\Redis::llen($queueName);
+
+            // Get failed jobs from database (failed jobs still go to DB)
+            $failed = DB::table('failed_jobs')->count();
+
+            // Calculate remaining from emails table
+            $totalEmails = DB::table('emails')->count();
+            $processed = DB::table('emails')->where('is_migrated', true)->count();
+            $remaining = max(0, $totalEmails - $processed - $failed);
+
+            return [
+                'pending' => max($pending, $remaining), // Show remaining from emails table
+                'failed' => $failed,
+                'oldest_job_age' => 0, // Redis doesn't track job age easily
+                'queue_health' => $this->determineQueueHealth($pending, $failed),
+            ];
+        } catch (\Exception $e) {
+            return $this->getDatabaseQueueStats();
+        }
+    }
+
+    private function getDatabaseQueueStats(): array
+    {
         // Use count() instead of get() to avoid loading all jobs into memory
         $pending = DB::table('jobs')->count();
         $failed = DB::table('failed_jobs')->count();
@@ -97,33 +135,44 @@ class MonitoringController
 
     private function getMigrationStats(): array
     {
-        $progress = MigrationProgress::latest()->first();
+        // Calculate stats directly from emails table (works with any queue driver)
+        $totalEmails = DB::table('emails')->count();
+        $processed = DB::table('emails')->where('is_migrated', true)->count();
+        $failed = DB::table('failed_jobs')->count();
+        $pending = max(0, $totalEmails - $processed - $failed);
 
-        if (!$progress) {
-            return [
-                'status' => 'No migration started',
-                'total_emails' => 0,
-                'processed' => 0,
-                'failed' => 0,
-                'success_rate' => 0,
-                'started_at' => null,
-                'completed_at' => null,
-            ];
+        // Determine status
+        $status = 'pending';
+        if ($pending === 0 && $totalEmails > 0) {
+            $status = 'completed';
+        } elseif ($processed > 0) {
+            $status = 'processing';
         }
 
-        $successRate = $progress->total_emails > 0
-            ? round(($progress->processed_emails / $progress->total_emails) * 100, 2)
+        // Calculate success rate
+        $totalAttempted = $processed + $failed;
+        $successRate = $totalAttempted > 0
+            ? round(($processed / $totalAttempted) * 100, 2)
             : 0;
 
+        // Get last error from failed_jobs
+        $lastError = null;
+        $lastFailedJob = DB::table('failed_jobs')
+            ->orderBy('failed_at', 'desc')
+            ->first();
+        if ($lastFailedJob) {
+            $lastError = substr($lastFailedJob->exception, 0, 200);
+        }
+
         return [
-            'status' => $progress->status,
-            'total_emails' => $progress->total_emails,
-            'processed' => $progress->processed_emails,
-            'failed' => $progress->failed_emails,
+            'status' => $status,
+            'total_emails' => $totalEmails,
+            'processed' => $processed,
+            'failed' => $failed,
             'success_rate' => $successRate,
-            'started_at' => $progress->started_at,
-            'completed_at' => $progress->completed_at,
-            'last_error' => $progress->last_error,
+            'started_at' => null,
+            'completed_at' => $status === 'completed' ? now()->format('Y-m-d H:i:s') : null,
+            'last_error' => $lastError,
         ];
     }
 
@@ -159,9 +208,13 @@ class MonitoringController
 
     private function getPerformanceStats(): array
     {
-        $progress = MigrationProgress::latest()->first();
+        // Calculate stats from emails table
+        $totalEmails = DB::table('emails')->count();
+        $processed = DB::table('emails')->where('is_migrated', true)->count();
+        $failed = DB::table('failed_jobs')->count();
+        $pending = max(0, $totalEmails - $processed - $failed);
 
-        if (!$progress || !$progress->started_at) {
+        if ($processed === 0) {
             return [
                 'emails_per_minute' => 0,
                 'estimated_completion' => null,
@@ -169,15 +222,29 @@ class MonitoringController
             ];
         }
 
-        // Calculate elapsed time as absolute difference to ensure positive value
-        $elapsedMinutes = abs($progress->started_at->diffInMinutes(now(), false));
+        // Get the oldest processed email to estimate start time
+        $oldestProcessedEmail = DB::table('emails')
+            ->where('is_migrated', true)
+            ->orderBy('migration_attempted_at', 'asc')
+            ->first(['migration_attempted_at']);
+
+        if (!$oldestProcessedEmail || !$oldestProcessedEmail->migration_attempted_at) {
+            return [
+                'emails_per_minute' => 0,
+                'estimated_completion' => null,
+                'elapsed_time' => 0,
+            ];
+        }
+
+        $startTime = \Carbon\Carbon::parse($oldestProcessedEmail->migration_attempted_at);
+        $elapsedMinutes = abs($startTime->diffInMinutes(now(), false));
+
         $emailsPerMinute = $elapsedMinutes > 0
-            ? round($progress->processed_emails / $elapsedMinutes, 2)
+            ? round($processed / $elapsedMinutes, 2)
             : 0;
 
-        $remaining = $progress->total_emails - $progress->processed_emails;
         $estimatedMinutes = $emailsPerMinute > 0
-            ? round($remaining / $emailsPerMinute)
+            ? round($pending / $emailsPerMinute)
             : null;
 
         return [
@@ -212,29 +279,47 @@ class MonitoringController
     {
         // Get configured number of workers from environment
         $configuredWorkers = (int) env('QUEUE_WORKERS', 10);
+        $workerTimeout = (int) env('QUEUE_WORKER_TIMEOUT', 300);
 
-        // Count jobs currently being processed (reserved but not yet completed)
-        // Jobs with reserved_at timestamp are currently being processed
+        // Count jobs actively being processed (reserved within timeout window)
+        // Only count jobs reserved in the last [timeout + 60s buffer] to exclude stale reservations
+        $timeoutThreshold = now()->subSeconds($workerTimeout + 60)->timestamp;
+
         $activeJobs = DB::table('jobs')
             ->whereNotNull('reserved_at')
+            ->where('reserved_at', '>', $timeoutThreshold)
             ->count();
 
-        // Get migration progress to calculate per-worker throughput
-        $progress = MigrationProgress::latest()->first();
+        // Cap active jobs at configured workers (can't have more active than configured)
+        $activeJobs = min($activeJobs, $configuredWorkers);
+
+        // Calculate throughput from emails table
+        $totalEmails = DB::table('emails')->count();
+        $processed = DB::table('emails')->where('is_migrated', true)->count();
+        $failed = DB::table('failed_jobs')->count();
 
         $throughputPerWorker = 0;
         $avgJobsPerWorker = 0;
 
-        if ($progress && $progress->started_at) {
-            $elapsedMinutes = abs($progress->started_at->diffInMinutes(now(), false));
+        if ($processed > 0) {
+            // Get the oldest processed email to estimate start time
+            $oldestProcessedEmail = DB::table('emails')
+                ->where('is_migrated', true)
+                ->orderBy('migration_attempted_at', 'asc')
+                ->first(['migration_attempted_at']);
 
-            if ($elapsedMinutes > 0 && $configuredWorkers > 0) {
-                // Calculate emails processed per worker per minute
-                $totalEmailsPerMinute = $progress->processed_emails / $elapsedMinutes;
-                $throughputPerWorker = round($totalEmailsPerMinute / $configuredWorkers, 2);
+            if ($oldestProcessedEmail && $oldestProcessedEmail->migration_attempted_at) {
+                $startTime = \Carbon\Carbon::parse($oldestProcessedEmail->migration_attempted_at);
+                $elapsedMinutes = abs($startTime->diffInMinutes(now(), false));
 
-                // Calculate average jobs processed per worker
-                $avgJobsPerWorker = round($progress->processed_emails / $configuredWorkers, 0);
+                if ($elapsedMinutes > 0 && $configuredWorkers > 0) {
+                    // Calculate emails processed per worker per minute
+                    $totalEmailsPerMinute = $processed / $elapsedMinutes;
+                    $throughputPerWorker = round($totalEmailsPerMinute / $configuredWorkers, 2);
+
+                    // Calculate average jobs processed per worker
+                    $avgJobsPerWorker = round($processed / $configuredWorkers, 0);
+                }
             }
         }
 

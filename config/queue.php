@@ -11,6 +11,15 @@ return [
             'retry_after' => 300,
             'after_commit' => false,
         ],
+
+        'redis' => [
+            'driver' => 'redis',
+            'connection' => env('REDIS_QUEUE_CONNECTION', 'default'),
+            'queue' => env('REDIS_QUEUE', 'default'),
+            'retry_after' => 300,
+            'block_for' => null,
+            'after_commit' => false,
+        ],
     ],
 
     'failed' => [
